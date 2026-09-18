@@ -1,0 +1,71 @@
+-- Transactional integration checks: all users, ratings, bookings, and trades roll back.
+begin;
+insert into auth.users(id,email,raw_user_meta_data) values
+('00000000-0000-4000-8000-000000000001','nsl-test-captain-a@example.invalid','{"full_name":"Test A"}'),
+('00000000-0000-4000-8000-000000000002','nsl-test-captain-b@example.invalid','{"full_name":"Test B"}'),
+('00000000-0000-4000-8000-000000000003','nsl-test-player@example.invalid','{"full_name":"Test Player"}');
+update public.profiles set role='captain',team_id=(select id from public.teams where slug='villains') where id='00000000-0000-4000-8000-000000000001';
+update public.profiles set role='captain',team_id=(select id from public.teams where slug='marlon-fc') where id='00000000-0000-4000-8000-000000000002';
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+do $$ declare a uuid; b uuid; michael public.players; safwat public.players; tid uuid; cid uuid; bid uuid; n int; denied bool; begin
+ select id into a from public.teams where slug='villains';select id into b from public.teams where slug='marlon-fc';
+ select * into michael from public.players where name='Michael';select * into safwat from public.players where name='Safwat';
+ if not public.can_manage(a) or public.can_manage(b) then raise exception 'FAIL: team authorization'; end if;
+ update public.players set overall=84 where id=michael.id;
+ if (select overall from public.players where id=michael.id)<>84 then raise exception 'FAIL: own-team rating edit';end if;
+ update public.players set overall=99 where id=safwat.id;
+ get diagnostics n=row_count;if n<>0 then raise exception 'FAIL: cross-team rating edit';end if;
+ denied=false;begin update public.players set team_id=a where id=safwat.id;exception when insufficient_privilege then denied=true;end;
+ if not denied then raise exception 'FAIL: team reassignment possible';end if;
+ denied=false;begin update public.profiles set role='admin' where id=auth.uid();exception when insufficient_privilege then denied=true;end;
+ if not denied then raise exception 'FAIL: role escalation possible';end if;
+ denied=false;begin perform public.update_ratings(safwat.id,to_jsonb(safwat),array['Flair']);exception when raise_exception then denied=true;end;
+ if not denied then raise exception 'FAIL: cross-team RPC edit';end if;
+ insert into public.reservations(type,team_id,date,start_time,end_time,location,created_by) values('practice',a,'2099-01-01','10:00','11:00','Test field',auth.uid()) returning id into bid;
+ denied=false;begin insert into public.reservations(type,team_id,date,start_time,end_time,location,created_by) values('practice',b,'2099-01-01','10:00','11:00','Test field',auth.uid());exception when insufficient_privilege then denied=true;end;
+ if not denied then raise exception 'FAIL: other-team booking';end if;
+ denied=false;begin insert into public.reservations(type,home_team_id,away_team_id,date,start_time,end_time,location,created_by) values('game',a,a,'2099-01-01','10:00','11:00','Test field',auth.uid());exception when check_violation then denied=true;end;
+ if not denied then raise exception 'FAIL: same-team game';end if;
+ tid=public.propose_trade(a,b,array[michael.id],array[safwat.id]);
+ if (select team_id from public.players where id=michael.id)<>a then raise exception 'FAIL: pending trade moved player';end if;
+ denied=false;begin perform public.respond_trade(tid,'accept');exception when raise_exception then denied=true;end;
+ if not denied then raise exception 'FAIL: proposer can accept own offer';end if;
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000002',true);
+ cid=public.propose_trade(b,a,array[safwat.id],array[michael.id],tid);
+ if (select team_id from public.players where id=michael.id)<>a then raise exception 'FAIL: counter moved player';end if;
+ denied=false;begin perform public.respond_trade(tid,'accept');exception when raise_exception then denied=true;end;
+ if not denied then raise exception 'FAIL: stale version accepted';end if;
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+ perform public.respond_trade(cid,'accept');
+ if (select team_id from public.players where id=michael.id)<>b or (select team_id from public.players where id=safwat.id)<>a then raise exception 'FAIL: atomic transfer';end if;
+ if (select status from public.trades where id=cid)<>'completed' or not exists(select 1 from public.trade_history where trade_id=cid) then raise exception 'FAIL: history missing';end if;
+ update public.players set overall=90 where id=michael.id;get diagnostics n=row_count;if n<>0 then raise exception 'FAIL: former captain retains permission';end if;
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000002',true);
+ update public.players set overall=86 where id=michael.id;get diagnostics n=row_count;if n<>1 then raise exception 'FAIL: new captain lacks permission';end if;
+ denied=false;begin perform public.respond_trade(cid,'accept');exception when raise_exception then denied=true;end;
+ if not denied then raise exception 'FAIL: duplicate acceptance';end if;
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000003',true);
+ update public.players set overall=99 where id=michael.id;get diagnostics n=row_count;if n<>0 then raise exception 'FAIL: player can edit';end if;
+ denied=false;begin perform public.propose_trade(a,b,array[safwat.id],array[michael.id]);exception when raise_exception then denied=true;end;
+ if not denied then raise exception 'FAIL: player can trade';end if;
+ if (select count(*) from public.profiles)<>1 then raise exception 'FAIL: profile privacy';end if;
+end $$;
+do $$ declare a uuid; b uuid; michael uuid; safwat uuid; first_offer uuid; stale_offer uuid; denied bool; begin
+ select id into a from public.teams where slug='villains';select id into b from public.teams where slug='marlon-fc';
+ select id into michael from public.players where name='Michael';select id into safwat from public.players where name='Safwat';
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000001',true);
+ first_offer=public.propose_trade(a,b,array[safwat],array[michael]);
+ stale_offer=public.propose_trade(a,b,array[safwat],array[michael]);
+ perform set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000002',true);
+ perform public.respond_trade(first_offer,'accept');
+ denied=false;begin perform public.respond_trade(stale_offer,'accept');exception when raise_exception then denied=true;end;
+ if not denied then raise exception 'FAIL: stale roster accepted';end if;
+ if (select status from public.trades where id=stale_offer)<>'pending' or (select team_id from public.players where id=michael)<>a or (select team_id from public.players where id=safwat)<>b then raise exception 'FAIL: failed trade partially committed';end if;
+ if exists(select 1 from public.trade_history where trade_id=stale_offer) then raise exception 'FAIL: failed trade created history';end if;
+ perform public.respond_trade(stale_offer,'decline');
+ if (select status from public.trades where id=stale_offer)<>'declined' then raise exception 'FAIL: decline';end if;
+end $$;
+reset role;
+select 'PASS: RLS, role escalation, booking validation, counter versions, atomic transfers, historical records, and ownership changes' as result;
+rollback;
