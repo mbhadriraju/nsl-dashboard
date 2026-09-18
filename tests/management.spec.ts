@@ -134,7 +134,7 @@ test("reservation validates times and submits two-team game", async ({
   await expect(page.getByLabel("Home team")).toHaveValue(own.id);
   await page.getByLabel("Start time").fill("18:00");
   await page.getByLabel("End time").fill("17:00");
-  await page.getByLabel("Location").fill("Test field");
+  await page.getByLabel("Location").selectOption("Lakewood Elementary");
   await page.getByRole("button", { name: "Book reservation" }).click();
   await expect(
     page.getByText("End time must be after start time."),
@@ -146,6 +146,21 @@ test("reservation validates times and submits two-team game", async ({
   expect(saved?.away_team_id).not.toBe(own.id);
   expect(saved?.team_id).toBeNull();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+test("friendly has no team fields and enforces 6 PM", async ({ page }) => {
+  await captain(page);
+  await page.route("**/rest/v1/reservations*", async (route) => {
+    await route.fulfill({ status: 200, body: "[]", contentType: "application/json" });
+  });
+  await page.goto("/schedule");
+  await page.getByRole("button", { name: "New reservation" }).click();
+  await page.getByLabel("Reservation type").selectOption("friendly");
+  await expect(page.getByLabel("Home team")).toHaveCount(0);
+  await expect(page.getByText("OPEN FRIENDLY")).toBeVisible();
+  await page.getByLabel("Start time").fill("17:30");
+  await page.getByLabel("End time").fill("19:00");
+  await page.getByRole("button", { name: "Book reservation" }).click();
+  await expect(page.getByText("Reservations start at 6:00 PM or later.")).toBeVisible();
 });
 test("trade requires both sides and final review", async ({ page }) => {
   const own = await captain(page);

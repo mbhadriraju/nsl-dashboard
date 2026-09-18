@@ -40,7 +40,7 @@ export interface Profile {
 }
 export interface Reservation {
   id: string;
-  type: "practice" | "game";
+  type: "practice" | "game" | "friendly";
   team_id: string | null;
   home_team_id: string | null;
   away_team_id: string | null;

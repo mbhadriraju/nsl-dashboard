@@ -23,10 +23,10 @@ create table public.profiles (
 );
 create index profiles_team_idx on public.profiles(team_id);
 create table public.reservations (
- id uuid primary key default gen_random_uuid(), type text not null check(type in ('practice','game')), team_id uuid references public.teams(id), home_team_id uuid references public.teams(id), away_team_id uuid references public.teams(id),
- date date not null, start_time time not null, end_time time not null, location text not null check(length(trim(location)) between 1 and 200), notes text check(length(notes)<=2000), created_by uuid not null references public.profiles(id),
+ id uuid primary key default gen_random_uuid(), type text not null check(type in ('practice','game','friendly')), team_id uuid references public.teams(id), home_team_id uuid references public.teams(id), away_team_id uuid references public.teams(id),
+ date date not null, start_time time not null check(start_time >= time '18:00'), end_time time not null, location text not null check(location in ('Lakewood Elementary','Scheels')), notes text check(length(notes)<=2000), created_by uuid not null references public.profiles(id),
  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
- check(end_time>start_time), check((type='practice' and team_id is not null and home_team_id is null and away_team_id is null) or (type='game' and team_id is null and home_team_id is not null and away_team_id is not null and home_team_id<>away_team_id))
+ check(end_time>start_time), check((type='practice' and team_id is not null and home_team_id is null and away_team_id is null) or (type='game' and team_id is null and home_team_id is not null and away_team_id is not null and home_team_id<>away_team_id) or (type='friendly' and team_id is null and home_team_id is null and away_team_id is null))
 );
 create index reservations_date_idx on public.reservations(date);
 create table public.trades (
@@ -44,6 +44,7 @@ create function public.handle_new_user() returns trigger language plpgsql securi
 create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();
 create function public.can_manage(t uuid) returns boolean language sql stable security definer set search_path='' as $$ select exists(select 1 from public.profiles where id=auth.uid() and (role='admin' or (role='captain' and team_id=t))) $$;
 create function public.is_admin() returns boolean language sql stable security definer set search_path='' as $$ select exists(select 1 from public.profiles where id=auth.uid() and role='admin') $$;
+create function public.can_manage_reservation(reservation_type text, reservation_team_id uuid, reservation_home_team_id uuid, reservation_away_team_id uuid) returns boolean language sql stable security definer set search_path='' as $$ select exists(select 1 from public.profiles where id=auth.uid() and (role='admin' or (role='captain' and (reservation_type='friendly' or team_id = any(array_remove(array[reservation_team_id,reservation_home_team_id,reservation_away_team_id],null)))))) $$;
 do $$ declare t text; begin foreach t in array array['teams','players','player_playstyles','profiles','reservations','trades','trade_players','trade_history'] loop execute format('alter table public.%I enable row level security',t); execute format('revoke all on public.%I from anon,authenticated',t); end loop; end $$;
 do $$ declare t text; begin foreach t in array array['teams','players','player_playstyles','reservations','trades','trade_players','trade_history'] loop execute format('grant select on public.%I to anon,authenticated',t); execute format('create policy public_read on public.%I for select using(true)',t); end loop; end $$;
 grant select on public.profiles to authenticated;
@@ -53,9 +54,9 @@ create function public.creator_name(user_id uuid) returns text language sql stab
 grant update(overall,shooting,pace,dribbling,passing,physical,defending,gk_overall,status) on public.players to authenticated;
 create policy team_ratings on public.players for update to authenticated using(public.can_manage(team_id)) with check(public.can_manage(team_id));
 grant insert,update,delete on public.reservations to authenticated;
-create policy booking_insert on public.reservations for insert to authenticated with check(created_by=auth.uid() and public.can_manage(coalesce(team_id,home_team_id)));
-create policy booking_update on public.reservations for update to authenticated using(public.can_manage(coalesce(team_id,home_team_id)) or public.can_manage(away_team_id)) with check(public.can_manage(coalesce(team_id,home_team_id)) or public.can_manage(away_team_id));
-create policy booking_delete on public.reservations for delete to authenticated using(public.can_manage(coalesce(team_id,home_team_id)) or public.can_manage(away_team_id));
+create policy booking_insert on public.reservations for insert to authenticated with check(created_by=auth.uid() and public.can_manage_reservation(type,team_id,home_team_id,away_team_id));
+create policy booking_update on public.reservations for update to authenticated using(public.can_manage_reservation(type,team_id,home_team_id,away_team_id)) with check(public.can_manage_reservation(type,team_id,home_team_id,away_team_id));
+create policy booking_delete on public.reservations for delete to authenticated using(public.can_manage_reservation(type,team_id,home_team_id,away_team_id));
 create function public.protect_reservation() returns trigger language plpgsql set search_path='' as $$ begin if new.created_by<>old.created_by or new.created_at<>old.created_at then raise exception 'Reservation ownership cannot be changed'; end if; return new; end $$;
 create trigger reservation_owner before update on public.reservations for each row execute function public.protect_reservation();
 create function public.update_ratings(p_id uuid, ratings jsonb, styles text[]) returns void language plpgsql security definer set search_path='' as $$
@@ -104,7 +105,7 @@ declare t public.trades; begin
  insert into public.trade_history(trade_id,snapshot) select t.id,jsonb_build_object('proposing_team_id',t.proposing_team_id,'receiving_team_id',t.receiving_team_id,'players',jsonb_agg(to_jsonb(tp))) from public.trade_players tp where tp.trade_id=t.id;
 end $$;
 revoke execute on all functions in schema public from public,anon;
-grant execute on function public.can_manage(uuid),public.is_admin(),public.update_ratings(uuid,jsonb,text[]),public.propose_trade(uuid,uuid,uuid[],uuid[],uuid),public.respond_trade(uuid,text) to authenticated;
+grant execute on function public.can_manage(uuid),public.is_admin(),public.can_manage_reservation(text,uuid,uuid,uuid),public.update_ratings(uuid,jsonb,text[]),public.propose_trade(uuid,uuid,uuid[],uuid[],uuid),public.respond_trade(uuid,text) to authenticated;
 grant execute on function public.creator_name(uuid) to anon,authenticated;
 -- Public realtime streams contain no profile data.
 alter publication supabase_realtime add table public.teams,public.players,public.player_playstyles,public.reservations,public.trades,public.trade_players;

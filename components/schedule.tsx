@@ -66,11 +66,13 @@ export function Schedule() {
       : days;
   const upcoming = reservations.filter(isUpcoming);
   const name = (r: Reservation) =>
-    r.type === "practice"
-      ? teams.find((t) => t.id === r.team_id)?.name
-      : teams.find((t) => t.id === r.home_team_id)?.name +
-        " vs " +
-        teams.find((t) => t.id === r.away_team_id)?.name;
+    r.type === "friendly"
+      ? "Open friendly"
+      : r.type === "practice"
+        ? teams.find((t) => t.id === r.team_id)?.name
+        : teams.find((t) => t.id === r.home_team_id)?.name +
+          " vs " +
+          teams.find((t) => t.id === r.away_team_id)?.name;
   async function remove() {
     if (!supabase || !selected) return;
     setBusy(true);
@@ -182,6 +184,10 @@ export function Schedule() {
               <i className="practice-dot" />
               Practice
             </span>
+            <span>
+              <i className="friendly-dot" />
+              Friendly
+            </span>
             <span>All times: America/Chicago</span>
           </div>
           {view === "List" ? (
@@ -278,7 +284,9 @@ export function Schedule() {
                 ? "Delete reservation?"
                 : selected.type === "game"
                   ? "Game details"
-                  : "Practice details"
+                  : selected.type === "friendly"
+                    ? "Friendly details"
+                    : "Practice details"
             }
             description={
               deleteConfirm
@@ -356,7 +364,9 @@ function ReservationForm({
 }) {
   const { teams, profile, canManage, refresh, notify } = useLeague();
   const managed = teams.filter((t) => canManage(t.id));
-  const [type, setType] = useState(initial?.type || "game"),
+  const [type, setType] = useState<Reservation["type"]>(
+      initial?.type || "game",
+    ),
     [home, setHome] = useState(
       initial?.team_id || initial?.home_team_id || managed[0]?.id || "",
     ),
@@ -371,6 +381,10 @@ function ReservationForm({
     const fd = new FormData(e.currentTarget);
     if (fd.get("end_time")! <= fd.get("start_time")!) {
       setError("End time must be after start time.");
+      return;
+    }
+    if (fd.get("start_time")! < "18:00") {
+      setError("Reservations start at 6:00 PM or later.");
       return;
     }
     if (type === "game" && home === away) {
@@ -418,20 +432,21 @@ function ReservationForm({
       open
       onClose={close}
       title={initial ? "Edit reservation" : "Book the pitch"}
-      description="Choose your teams, then set a time and place."
+      description="Choose teams when needed, then set a time and place. Reservations start at 6:00 PM or later."
     >
       <form onSubmit={submit}>
         <label>
           Reservation type
           <select
             value={type}
-            onChange={(e) => setType(e.target.value as "game" | "practice")}
+            onChange={(e) => setType(e.target.value as Reservation["type"])}
           >
             <option value="game">Game</option>
             <option value="practice">Practice</option>
+            <option value="friendly">Friendly</option>
           </select>
         </label>
-        <div className="form-grid">
+        {type !== "friendly" && <div className="form-grid">
           <label>
             {type === "game" ? "Home team" : "Team"}
             <select
@@ -463,15 +478,15 @@ function ReservationForm({
               </select>
             </label>
           )}
-        </div>
+        </div>}
         <div className="form-matchup">
-          <Logo team={teams.find((t) => t.id === home)} size={64} />
+          {type === "friendly" ? <b>OPEN FRIENDLY</b> : <><Logo team={teams.find((t) => t.id === home)} size={64} />
           {type === "game" && (
             <>
               <b>VS</b>
               <Logo team={teams.find((t) => t.id === away)} size={64} />
             </>
-          )}
+          )}</>}
         </div>
         <label>
           Date
@@ -488,8 +503,9 @@ function ReservationForm({
             <input
               type="time"
               name="start_time"
+              min="18:00"
               required
-              defaultValue={initial?.start_time}
+              defaultValue={initial?.start_time || "18:00"}
             />
           </label>
           <label>
@@ -505,13 +521,14 @@ function ReservationForm({
         <p className="muted">Times are in America/Chicago.</p>
         <label>
           Location
-          <input
+          <select
             name="location"
             required
-            maxLength={200}
-            defaultValue={initial?.location}
-            placeholder="Field name or address"
-          />
+            defaultValue={initial?.location || "Lakewood Elementary"}
+          >
+            <option value="Lakewood Elementary">Lakewood Elementary</option>
+            <option value="Scheels">Scheels</option>
+          </select>
         </label>
         <label>
           Notes (optional)

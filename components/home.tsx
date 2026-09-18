@@ -108,27 +108,39 @@ export function TeamCard({ team }: { team: Team }) {
 }
 export function EventCard({ event }: { event: Reservation }) {
   const { teams } = useLeague();
+  const isFriendly = event.type === "friendly";
+  console.log("EVENT:", event);
   const home = teams.find(
     (t) => t.id === (event.team_id || event.home_team_id),
   );
   const away = teams.find((t) => t.id === event.away_team_id);
   return (
     <div className={`event-card ${event.type}`}>
-      <span className="eyebrow">
-        {event.type === "game" ? "League game" : "Team practice"}
+      <span className="eyebrow" style={{ fontSize: "16px" }}>
+        {event.type === "game"
+          ? "League game"
+          : isFriendly
+            ? "Friendly"
+            : "Team practice"}
       </span>
       <div className="matchup">
-        <div>
-          <Logo team={home} size={56} />
-          <strong>{home?.name}</strong>
-        </div>
-        {away && (
+        {isFriendly ? (
+          <strong className="friendly-name">Open friendly</strong>
+        ) : (
           <>
-            <span className="vs">VS</span>
             <div>
-              <Logo team={away} size={56} />
-              <strong>{away.name}</strong>
+              <Logo team={home} size={56} />
+              <strong>{home?.name}</strong>
             </div>
+            {away && (
+              <>
+                <span className="vs">VS</span>
+                <div>
+                  <Logo team={away} size={56} />
+                  <strong>{away.name}</strong>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -255,8 +267,8 @@ export function Home() {
                   <ArrowUpRight size={18} />
                 </Link>
               </div>
-              {upcoming.find((e) => e.type === "game") ? (
-                <EventCard event={upcoming.find((e) => e.type === "game")!} />
+              {upcoming.find((e) => e.type === "friendly") ? (
+                <EventCard event={upcoming.find((e) => e.type === "friendly")!} />
               ) : (
                 <div className="compact-empty panel">
                   <span className="event-label">
@@ -269,22 +281,6 @@ export function Home() {
                     View schedule <ArrowRight size={15} />
                   </Link>
                 </div>
-              )}
-              {upcoming.find((e) => e.type === "practice") ? (
-                <EventCard
-                  event={upcoming.find((e) => e.type === "practice")!}
-                />
-              ) : (
-                <Link className="practice-empty panel" href="/schedule">
-                  <div className="practice-icon">
-                    <Shield size={20} />
-                  </div>
-                  <div>
-                    <span className="eyebrow">NEXT PRACTICE</span>
-                    <p>No practice scheduled</p>
-                  </div>
-                  <ArrowUpRight size={17} />
-                </Link>
               )}
             </aside>
           </div>

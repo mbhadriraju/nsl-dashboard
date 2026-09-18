@@ -1433,6 +1433,9 @@ a.button:hover {
 .practice-dot {
   background: var(--cyan);
 }
+.friendly-dot {
+  background: var(--gold);
+}
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1527,6 +1530,17 @@ a.button:hover {
 }
 .event-card.practice > .eyebrow {
   color: var(--cyan);
+}
+.event-card.friendly {
+  border-top-color: #e7c87899;
+}
+.event-card.friendly > .eyebrow {
+  color: var(--gold);
+}
+.friendly-name {
+  font-size: 18px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 .matchup {
   display: flex;
