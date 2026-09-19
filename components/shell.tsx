@@ -20,6 +20,7 @@ const links = [
   ["Rosters", "/rosters"],
   ["Trades", "/trades"],
   ["Media", "/media"],
+  ["Doc", "/doc"],
 ];
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
